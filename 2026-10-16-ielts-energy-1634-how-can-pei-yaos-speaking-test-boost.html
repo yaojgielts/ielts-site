@@ -56,38 +56,73 @@
             width: 100%;
         }
 
-        .lang-tabs {
-            padding: 15px 30px;
-            background: #fff;
-            border-bottom: 1px solid #eee;
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            /* 吸顶：滚过顶部后语言栏固定，滚动时始终可切换语种 */
-            position: sticky;
-            top: 0;
-            z-index: 10;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+        .lang-fab {
+            position: fixed;
+            z-index: 100;
+            /* left/top 由脚本初始化到右下角，拖动时实时更新；fixed 故不随页面滚动 */
         }
 
-        .lang-tab {
-            padding: 8px 16px;
-            border: 1px solid #ddd;
-            border-radius: 20px;
-            background: white;
+        .lang-fab-btn {
+            width: 52px;
+            height: 52px;
+            border: none;
+            border-radius: 50%;
+            background: #667eea;
+            color: #fff;
+            font-size: 24px;
+            line-height: 1;
             cursor: pointer;
-            font-size: 14px;
-            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+            touch-action: none;  /* 交给指针事件处理拖动，避免触屏滚动时误拖 */
+            user-select: none;
         }
 
-        .lang-tab:hover {
+        .lang-fab-menu {
+            position: absolute;
+            bottom: 62px;
+            right: 0;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
+            padding: 6px;
+            min-width: 150px;
+            display: none;
+        }
+
+        .lang-fab.open .lang-fab-menu {
+            display: block;
+        }
+
+        .lang-fab-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 9px 10px;
+            border: none;
+            background: transparent;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+            color: #333;
+            text-align: left;
+        }
+
+        .lang-fab-item:hover {
             background: #f0f0f0;
         }
 
-        .lang-tab.active {
+        .lang-fab-item.active {
             background: #667eea;
-            color: white;
-            border-color: #667eea;
+            color: #fff;
+        }
+
+        .lang-fab-item .f {
+            font-size: 20px;
+            line-height: 1;
         }
 
         .content {
@@ -252,7 +287,7 @@
                 padding: 8px;
             }
 
-            .header, .controls, .lang-tabs {
+            .header, .controls {
                 padding: 12px;
             }
 
@@ -291,10 +326,6 @@
                 <source src="https://traffic.megaphone.fm/ALLE7796368405.mp3" type="audio/mpeg">
                 Your browser does not support the audio element.
             </audio>
-        </div>
-
-        <div class="lang-tabs">
-            <button class="lang-tab active" data-lang="zh">🇨🇳 中文</button><button class="lang-tab" data-lang="ja">🇯🇵 日本語</button><button class="lang-tab" data-lang="de">🇩🇪 Deutsch</button><button class="lang-tab" data-lang="fr">🇫🇷 Français</button><button class="lang-tab" data-lang="ko">🇰🇷 한국어</button>
         </div>
 
         <div class="controls">
@@ -379,13 +410,14 @@
         </div>
     </div>
 
+    <div class="lang-fab" id="langFab"><div class="lang-fab-menu" id="langFabMenu"><button class="lang-fab-item active" data-lang="zh" data-flag="🇨🇳"><span class="f">🇨🇳</span><span class="n">中文</span></button><button class="lang-fab-item" data-lang="ja" data-flag="🇯🇵"><span class="f">🇯🇵</span><span class="n">日本語</span></button><button class="lang-fab-item" data-lang="de" data-flag="🇩🇪"><span class="f">🇩🇪</span><span class="n">Deutsch</span></button><button class="lang-fab-item" data-lang="fr" data-flag="🇫🇷"><span class="f">🇫🇷</span><span class="n">Français</span></button><button class="lang-fab-item" data-lang="ko" data-flag="🇰🇷"><span class="f">🇰🇷</span><span class="n">한국어</span></button></div><button class="lang-fab-btn" id="langFabBtn" aria-label="切换语言">🇨🇳</button></div>
+
     <script>
         const audio = document.getElementById('audio');
         const playPauseBtn = document.getElementById('playPauseBtn');
         const speedSelect = document.getElementById('speedSelect');
         const progressEl = document.getElementById('progress');
         const sentences = document.querySelectorAll('.sentence');
-        const langTabs = document.querySelectorAll('.lang-tab');
 
         let currentLang = 'zh';
         let activeSentenceIndex = -1;
@@ -492,15 +524,85 @@
             });
         });
 
-        // 语言切换
-        langTabs.forEach(tab => {
-            tab.addEventListener('click', () => {
-                langTabs.forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                currentLang = tab.dataset.lang;
+        // 语言悬浮按钮：点开列出全部语种，选中后收起；按钮可拖动，fixed 不随页面滚动
+        const langFab = document.getElementById('langFab');
+        if (langFab) {
+            const fabBtn = document.getElementById('langFabBtn');
+            const fabMenu = document.getElementById('langFabMenu');
+            const fabItems = Array.from(fabMenu.querySelectorAll('.lang-fab-item'));
+            const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+            // 初始定位到右下角
+            const pad = 16;
+            langFab.style.left = (window.innerWidth - fabBtn.offsetWidth - pad) + 'px';
+            langFab.style.top = (window.innerHeight - fabBtn.offsetHeight - pad) + 'px';
+
+            const openMenu = (open) => {
+                langFab.classList.toggle('open', open);
+                if (!open) return;
+                // 按四周可用空间决定菜单朝哪边展开，避免被屏幕边缘裁掉
+                const r = langFab.getBoundingClientRect();
+                const above = r.top > 280;
+                fabMenu.style.bottom = above ? '62px' : 'auto';
+                fabMenu.style.top = above ? 'auto' : (fabBtn.offsetHeight + 10) + 'px';
+                const leftAlign = (window.innerWidth - r.right) < 170;
+                fabMenu.style.right = leftAlign ? 'auto' : '0';
+                fabMenu.style.left = leftAlign ? '0' : 'auto';
+            };
+
+            const setLang = (lang, flag) => {
+                currentLang = lang;
+                fabItems.forEach(i => i.classList.toggle('active', i.dataset.lang === lang));
+                fabBtn.textContent = flag;
                 updateLanguageVisibility();
+            };
+
+            fabItems.forEach(item => {
+                item.addEventListener('click', () => {
+                    setLang(item.dataset.lang, item.dataset.flag);
+                    openMenu(false);
+                });
             });
-        });
+
+            // 拖动 vs 点击：用位移阈值区分，超过 5px 视为拖动，否则当点击展开/收起
+            let drag = null;
+            fabBtn.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                const r = langFab.getBoundingClientRect();
+                drag = { x: e.clientX, y: e.clientY, left: r.left, top: r.top, moved: false };
+                fabBtn.setPointerCapture(e.pointerId);
+            });
+            fabBtn.addEventListener('pointermove', (e) => {
+                if (!drag) return;
+                const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+                if (!drag.moved && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) drag.moved = true;
+                if (drag.moved) {
+                    const w = fabBtn.offsetWidth, h = fabBtn.offsetHeight;
+                    langFab.style.left = clamp(drag.left + dx, 4, window.innerWidth - w - 4) + 'px';
+                    langFab.style.top = clamp(drag.top + dy, 4, window.innerHeight - h - 4) + 'px';
+                }
+            });
+            const endDrag = (e) => {
+                if (!drag) return;
+                const moved = drag.moved;
+                drag = null;
+                try { fabBtn.releasePointerCapture(e.pointerId); } catch (err) {}
+                if (!moved) openMenu(!langFab.classList.contains('open'));
+            };
+            fabBtn.addEventListener('pointerup', endDrag);
+            fabBtn.addEventListener('pointercancel', () => { drag = null; });
+
+            // 点菜单外任意处收起
+            document.addEventListener('click', (e) => {
+                if (!langFab.contains(e.target)) openMenu(false);
+            });
+            // 视口变化时把按钮拉回可视范围，避免拖到窗口外后找不回
+            window.addEventListener('resize', () => {
+                const w = fabBtn.offsetWidth, h = fabBtn.offsetHeight;
+                langFab.style.left = clamp(parseFloat(langFab.style.left) || 0, 4, window.innerWidth - w - 4) + 'px';
+                langFab.style.top = clamp(parseFloat(langFab.style.top) || 0, 4, window.innerHeight - h - 4) + 'px';
+            });
+        }
 
         function updateLanguageVisibility() {
             // 只显示当前选中语言的整段译文（段落级），英文原文始终可见
