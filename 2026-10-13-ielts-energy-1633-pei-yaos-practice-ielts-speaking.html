@@ -341,9 +341,9 @@
 
         <div class="audio-player">
             <audio id="audio" controls>
-                <source src="https://cdn.jsdelivr.net/gh/yaojgielts/ielts-site@main/audio/2026-10-13-ielts-energy-1633-pei-yaos-practice-ielts-speaking.mp3" type="audio/mpeg">
                 Your browser does not support the audio element.
             </audio>
+            <div class="audio-status" id="audioStatus" role="status"></div>
         </div>
 
         <div class="controls">
@@ -647,5 +647,135 @@
         updateLanguageVisibility();
         audio.addEventListener('loadedmetadata', updateProgress);
     </script>
+<style id="audio-multi-source-style">
+    .audio-status {
+        display: none;
+        margin-top: 8px;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #8a8f99;
+        word-break: break-all;
+    }
+
+    .audio-status.show {
+        display: block;
+    }
+
+    .audio-status.error {
+        color: #c0392b;
+    }
+    </style>
+<script id="audio-multi-source">
+(function () {
+    // 候选按序尝试：raw 直连最快但逐次随机超时，Pages 稳但实测只有约 10KB/s，
+    // 对象存储接上后排在最前。三个源的失效方式不同，所以要逐个退，而不是只挂一条。
+    var CANDIDATES = ["https://raw.githubusercontent.com/yaojgielts/ielts-site/main/audio/2026-10-13-ielts-energy-1633-pei-yaos-practice-ielts-speaking.mp3", "https://yaojgielts.github.io/ielts-site/audio/2026-10-13-ielts-energy-1633-pei-yaos-practice-ielts-speaking.mp3"];
+    var audio = document.getElementById('audio');
+    if (!audio) return;
+
+    var box = document.getElementById('audioStatus');
+    if (!box) {
+        box = document.createElement('div');
+        box.id = 'audioStatus';
+        box.setAttribute('role', 'status');
+        (audio.parentNode || document.body).appendChild(box);
+    }
+
+    // 只做头部与首帧的按需取数：整集 64kbps 约 8.5MB，开页就全量预拉会把
+    // 下行流量白烧在没点播放的人身上。
+    audio.preload = 'metadata';
+
+    // 挂死的连接既不触发 error 也不触发 end，只能靠计时判定。首字节给 25s：实测 raw
+    // 成功返回时最慢到过 23.6s，设 12s 会把本来能通的源主动判死（第一版就是这么写的）。
+    // 之后每收到一次 progress 就续期，所以慢但还在收字的源不会被掐。
+    var LOAD_TIMEOUT = 25000;
+    var idx = -1;
+    var timer = null;
+    var resumeAt = 0;
+    var wasPlaying = false;
+
+    function hostOf(u) {
+        try { return new URL(u).hostname; } catch (e) { return u; }
+    }
+
+    function setStatus(text, isError) {
+        box.textContent = text || '';
+        box.className = 'audio-status' + (text ? ' show' : '') + (isError ? ' error' : '');
+    }
+
+    function stopWatchdog() {
+        if (timer) { clearTimeout(timer); timer = null; }
+    }
+
+    function armWatchdog() {
+        stopWatchdog();
+        timer = setTimeout(advance, LOAD_TIMEOUT);
+    }
+
+    function uniqueHosts(list) {
+        var seen = [];
+        list.forEach(function (u) {
+            var h = hostOf(u);
+            if (seen.indexOf(h) < 0) seen.push(h);
+        });
+        return seen;
+    }
+
+    function use(i) {
+        idx = i;
+        audio.src = CANDIDATES[i];
+        audio.load();
+        armWatchdog();
+        setStatus(
+            i === 0
+                ? '正在加载：' + hostOf(CANDIDATES[i])
+                : '第 ' + (i + 1) + '/' + CANDIDATES.length + ' 个源重试：' + hostOf(CANDIDATES[i]),
+            false
+        );
+    }
+
+    function advance() {
+        // 已经拿到元数据说明这份源是活的，之后的卡顿属于正常缓冲，不要再换源
+        if (audio.readyState >= 1) { stopWatchdog(); return; }
+        var next = idx + 1;
+        if (next >= CANDIDATES.length) {
+            stopWatchdog();
+            setStatus(
+                '音频取不到：' + uniqueHosts(CANDIDATES).join('、') + ' 都没有响应，稍后重试或刷新页面。',
+                true
+            );
+            return;
+        }
+        // 换源要保住进度和播放意图，否则听到一半遇到超时的学生会被弹回 0:00
+        resumeAt = audio.currentTime || 0;
+        wasPlaying = !audio.paused;
+        use(next);
+    }
+
+    audio.addEventListener('loadedmetadata', function () {
+        stopWatchdog();
+        setStatus('', false);
+        if (wasPlaying && resumeAt > 0 && isFinite(audio.duration) && resumeAt < audio.duration) {
+            audio.currentTime = resumeAt;
+            audio.play().catch(function () { /* 浏览器可能拒绝自动续播，忽略 */ });
+        }
+        resumeAt = 0;
+        wasPlaying = false;
+    });
+
+    // 硬错误（404/403/连接被重置）走这条，和超时共用同一个退避序列
+    audio.addEventListener('error', advance);
+
+    audio.addEventListener('progress', function () {
+        if (idx >= 0 && audio.readyState === 0) armWatchdog();
+    });
+
+    if (!CANDIDATES.length) {
+        setStatus('本集没有可用的音频地址。', true);
+    } else {
+        use(0);
+    }
+})();
+</script>
 </body>
 </html>
